@@ -10,7 +10,7 @@ class bittrex_api:
 
 	def getSecret(self):
 		try:
-			with open("secrets.json", 'r') as secrets_file:
+			with open("~/secrets.json", 'r') as secrets_file:
 				secrets = json.load(secrets_file)
 				secrets_file.close()
 			return secrets["key"], secrets["secret"]
