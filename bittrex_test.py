@@ -1,4 +1,5 @@
 from bittrex_api import bittrex_api
+from ccxt_api import ccxt_api
 import time
 from matplotlib.finance import candlestick_ohlc
 import matplotlib.pyplot as plt
@@ -8,8 +9,10 @@ import numpy as np
 from datetime import datetime
 from sklearn.model_selection import train_test_split
 from sklearn import tree
+from sklearn.neighbors import KNeighborsClassifier 
 from sklearn.naive_bayes import GaussianNB
-from sklearn.metrics import confusion_matrix
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import confusion_matrix, classification_report
 
 
 
@@ -75,6 +78,7 @@ class MathCircularBuffer:
 			self.sum -= last
 			self.sum_squared -= last*last
 		self.data.append(val)
+
 		self.sum += val
 		self.sum_squared += val*val
 
@@ -136,17 +140,19 @@ class CandleSeries:
 
 
 	def addCandle(self, candle):
-		t = datetime.strptime(candle['T'], '%Y-%m-%dT%H:%M:%S')
-		t = mdates.date2num(t)
-		self.times.append(t)
-		self.opens.append(candle['O'])
-		self.highs.append(candle['H'])
-		self.lows.append(candle['L'])
-		self.closes.append(candle['C'])
-		self.mids_time.append( (candle['C'] + candle['O'])/2. )
-		self.mids_HL.append( (candle['H'] + candle['L'])/2. )
-		self.closes.append(candle['C'])
-		self.volumes.append(candle['V'])
+		# t = datetime.strptime(candle['T'], '%Y-%m-%dT%H:%M:%S')
+		# t = mdates.date2num(t)
+		# print candle
+		# t = datetime.fromtimestamp(candle[0]/1000)
+		self.times.append(candle[0])
+		self.opens.append(candle[1])
+		self.highs.append(candle[2])
+		self.lows.append(candle[3])
+		self.closes.append(candle[4])
+		self.mids_time.append( (candle[4] + candle[1])/2. )
+		self.mids_HL.append( (candle[3] + candle[2])/2. )
+		self.closes.append(candle[4])
+		self.volumes.append(candle[5])
 
 	def calculateHLRangeNormalized(self):
 		min_ = self.lows.min()
@@ -162,7 +168,9 @@ class CandleSeries:
 		return res
 
 	def calculateVolumePercentChange(self):
-		return (self.volumes.data[-1] - self.volumes.data[0])/self.volumes.data[0]
+		if self.volumes.data[0] != 0:
+			return (self.volumes.data[-1] - self.volumes.data[0])/self.volumes.data[0]
+		return 0.
 
 	def calculateCenterTimeSlope(self):
 		sum_xx = self.mids_time.sumSquared()
@@ -189,7 +197,7 @@ class FeatureCalculator:
 		self.features = []
 		self.labels = []
 		self.classifications = []
-		self.bittrex = bittrex_api()
+		self.ccxt = ccxt_api()
 		self.candleSet = []
 		self.times = []
 		self.label_cutoff = label_cutoff
@@ -197,83 +205,86 @@ class FeatureCalculator:
 
 	def loadTrainingDataFromWeb(self):
 		# self.candleSet = []
-		for market in self.markets:
-			candles = self.bittrex.get_candles("{0}-{1}".format(self.base, market), self.increments)
-			if candles is None:
-				print "Got No Data for {0}-{1} pair".format(self.base, market)
-				continue
-			candleSeries1 = CandleSeries(capacity=1, base=self.base, market=market)
-			candleSeries2 = CandleSeries(capacity=8, base=self.base, market=market)
-			candleSeries4 = CandleSeries(capacity=16, base=self.base, market=market)
-			candleSeries8 = CandleSeries(capacity=32, base=self.base, market=market)
-			candleSeries16 = CandleSeries(capacity=64, base=self.base, market=market)
-			print "Gathering {0}-{1} data with {2} candles".format(self.base, market, len(candles))
-			for candle, i in zip(candles, range(len(candles))):
-				candleSeries1.addCandle(candle)
-				candleSeries2.addCandle(candle)
-				candleSeries4.addCandle(candle)
-				candleSeries8.addCandle(candle)
-				candleSeries16.addCandle(candle)
-				# print i
-				if candleSeries16.full() and i != len(candles)-1:
-					f = []
-					f.append((candles[i]['C'] - candles[i]['O'])/candles[i]['O']) #0
-					f.append((candles[i]['H'] - candles[i]['L'])/candles[i]['L']) #1
-					f.append(candleSeries1.calculateHLRangeNormalized()) #2
-					f.append(candleSeries1.calculateOCNormalized()) #3
-					f.append(candleSeries1.calculatePositiveMomentum())
-					f.append(candleSeries1.calculateNegativeMomentum())
-					f.append(candleSeries2.calculateHLRangeNormalized())
-					f.append(candleSeries2.calculateOCNormalized())
-					f.append(candleSeries2.calculateVolumePercentChange())
-					f.append(candleSeries2.calculateCenterTimeSlope())
-					f.append(candleSeries2.calculateCenterHLSlope())
-					f.append(candleSeries2.calculatePositiveMomentum())
-					f.append(candleSeries2.calculateNegativeMomentum())
-					f.append(candleSeries4.calculateHLRangeNormalized())
-					f.append(candleSeries4.calculateOCNormalized())
-					f.append(candleSeries4.calculateVolumePercentChange())
-					f.append(candleSeries4.calculateCenterTimeSlope())
-					f.append(candleSeries4.calculateCenterHLSlope())
-					f.append(candleSeries4.calculatePositiveMomentum())
-					f.append(candleSeries4.calculateNegativeMomentum())
-					f.append(candleSeries8.calculateHLRangeNormalized())
-					f.append(candleSeries8.calculateOCNormalized())
-					f.append(candleSeries8.calculateVolumePercentChange())
-					f.append(candleSeries8.calculateCenterTimeSlope())
-					f.append(candleSeries8.calculateCenterHLSlope())
-					f.append(candleSeries8.calculatePositiveMomentum())
-					f.append(candleSeries8.calculateNegativeMomentum())
-					f.append(candleSeries16.calculateHLRangeNormalized())
-					f.append(candleSeries16.calculateOCNormalized())
-					f.append(candleSeries16.calculateVolumePercentChange())
-					f.append(candleSeries16.calculateCenterTimeSlope())
-					f.append(candleSeries16.calculateCenterHLSlope())
-					f.append(candleSeries16.calculatePositiveMomentum())
-					f.append(candleSeries16.calculateNegativeMomentum())
-					# if len(f) > 34:
-					# 	print market
+		for base in self.base:
+			for market in self.markets:
+				candle_sets = self.ccxt.get_candles(base, market, self.increments)
+				# candles = self.bittrex.get_candles("{0}-{1}".format(self.base, market), self.increments)
+				print "Candle Sets: " + str(len(candle_sets))
+				for candles in candle_sets:
+					if candles is None or len(candles) < 63:
+						print "Got No Data for {0}-{1} pair".format(base, market)
+						continue
+					candleSeries1 = CandleSeries(capacity=1, base=base, market=market)
+					candleSeries2 = CandleSeries(capacity=8, base=base, market=market)
+					candleSeries4 = CandleSeries(capacity=16, base=base, market=market)
+					candleSeries8 = CandleSeries(capacity=32, base=base, market=market)
+					candleSeries16 = CandleSeries(capacity=64, base=base, market=market)
+					print "Adding {0}-{1} data with {2} candles".format(base, market, len(candles))
+					for candle, i in zip(candles, range(len(candles))):
+						try:
+							candleSeries1.addCandle(candle)
+							candleSeries2.addCandle(candle)
+							candleSeries4.addCandle(candle)
+							candleSeries8.addCandle(candle)
+							candleSeries16.addCandle(candle)
+							# print i
+							if candleSeries16.full() and i != len(candles)-1:
+								f = []
+								f.append((candles[i][4] - candles[i][1])/candles[i][1]) #0
+								f.append((candles[i][2] - candles[i][3])/candles[i][3]) #1
+								f.append(candleSeries1.calculateHLRangeNormalized()) #2
+								f.append(candleSeries1.calculateOCNormalized()) #3
+								f.append(candleSeries1.calculatePositiveMomentum())
+								f.append(candleSeries1.calculateNegativeMomentum())
+								f.append(candleSeries2.calculateHLRangeNormalized())
+								f.append(candleSeries2.calculateOCNormalized())
+								f.append(candleSeries2.calculateVolumePercentChange())
+								f.append(candleSeries2.calculateCenterTimeSlope())
+								f.append(candleSeries2.calculateCenterHLSlope())
+								f.append(candleSeries2.calculatePositiveMomentum())
+								f.append(candleSeries2.calculateNegativeMomentum())
+								f.append(candleSeries4.calculateHLRangeNormalized())
+								f.append(candleSeries4.calculateOCNormalized())
+								f.append(candleSeries4.calculateVolumePercentChange())
+								f.append(candleSeries4.calculateCenterTimeSlope())
+								f.append(candleSeries4.calculateCenterHLSlope())
+								f.append(candleSeries4.calculatePositiveMomentum())
+								f.append(candleSeries4.calculateNegativeMomentum())
+								f.append(candleSeries8.calculateHLRangeNormalized())
+								f.append(candleSeries8.calculateOCNormalized())
+								f.append(candleSeries8.calculateVolumePercentChange())
+								f.append(candleSeries8.calculateCenterTimeSlope())
+								f.append(candleSeries8.calculateCenterHLSlope())
+								f.append(candleSeries8.calculatePositiveMomentum())
+								f.append(candleSeries8.calculateNegativeMomentum())
+								f.append(candleSeries16.calculateHLRangeNormalized())
+								f.append(candleSeries16.calculateOCNormalized())
+								f.append(candleSeries16.calculateVolumePercentChange())
+								f.append(candleSeries16.calculateCenterTimeSlope())
+								f.append(candleSeries16.calculateCenterHLSlope())
+								f.append(candleSeries16.calculatePositiveMomentum())
+								f.append(candleSeries16.calculateNegativeMomentum())
+								# if len(f) > 34:
+								# 	print market
 
-					# l = (candles[i+1]['C'] - candles[i+1]['O'])/candles[i+1]['O']
-					m = (candles[i+1]['C'] - candles[i+1]['O'])/candles[i+1]['O']
-					if m < -self.label_cutoff:
-						l = 0
-					elif m >= -self.label_cutoff and m < 0.:
-						l = 0
-					elif m >= 0. and m < self.label_cutoff:
-						l = 1
-					else:
-						l = 1
-					# print l
-					self.features.append(f)
-					self.labels.append(m)
-					self.classifications.append(l)
-					self.times.append(candleSeries1.times.data[0])
-				# t = datetime.strptime(candle['T'], '%Y-%m-%dT%H:%M:%S')
-				# t = mdates.date2num(t)
-				# append = t, candle['O'], candle['H'], candle['L'], candle['C'], candle['V'], "{0}-{1}".format(self.base, market)
-				# self.raw_data.append(append)
-			# self.candleSet.append(candleSeries)
+								# l = (candles[i+1]['C'] - candles[i+1]['O'])/candles[i+1]['O']
+								m = (candles[i+1][4] - candles[i+1][1])/candles[i+1][1]
+								if m < -self.label_cutoff:
+									l = 0
+								elif m >= -self.label_cutoff and m < 0.:
+									l = 0
+								elif m >= 0. and m < self.label_cutoff:
+									l = 1
+								else:
+									l = 1
+								# print l
+								self.features.append(f)
+								self.labels.append(m)
+								self.classifications.append(l)
+								self.times.append(candleSeries1.times.data[0])
+						except:
+							break
+
 
 	def saveTrainingDataToFile(self, filename):
 		import csv
@@ -343,8 +354,7 @@ class FeatureCalculator:
 	def getClassifications(self):
 		return np.array(self.classifications)
 
-markets=["OMG", "NEO", "XRP", "XMR", "ADA", "LTC", "ETC", "ZEC", "BCC", "XLM", "QTUM", "POWR", "STRAT", "BAT", "XEM"]
-base="ETH"
+
 
 
 
@@ -360,17 +370,19 @@ base="ETH"
 
 
 
+markets=["ETH"]
+base=["USD"]
+featureCalculator = FeatureCalculator(base=base, markets=markets, increments="1m", label_cutoff=0.005)
+# markets=["STRAT", "BAT", "XEM"]
+featureCalculator2 = FeatureCalculator(base=base, markets=markets, increments="1m", label_cutoff=0.005)
 
-featureCalculator = FeatureCalculator(base=base, markets=markets, increments="oneMin", label_cutoff=0.005)
-markets=["SC", "FUN", "SNT", "DASH"]
-featureCalculator2 = FeatureCalculator(base=base, markets=markets, increments="oneMin", label_cutoff=0.005)
-
-# featureCalculator.loadTrainingDataFromWeb()
-# featureCalculator.saveTrainingDataToFile("latest_data1m.csv")
-featureCalculator.loadTrainingDataFromFile("latest_data1m.csv")
+featureCalculator.loadTrainingDataFromWeb()
+featureCalculator.saveTrainingDataToFile("latest_data1m.csv")
+# featureCalculator.loadTrainingDataFromFile("latest_data1m.csv")
 
 featureCalculator2.loadTrainingDataFromWeb()
-# featureCalculator2.saveTrainingDataToFile("latest_data1m_NXT.csv")
+featureCalculator2.saveTrainingDataToFile("latest_data1m_NXT.csv")
+# featureCalculator2.loadTrainingDataFromFile("latest_data1m_NXT.csv")
 
 features = featureCalculator.getFeatures()
 labels = featureCalculator.getLabels()
@@ -380,11 +392,29 @@ labels2 = featureCalculator2.getLabels()
 classifications2 = featureCalculator2.getClassifications()
 print features.shape, features2.shape
 
+
+
+print "DECISION TREE"
 clf = tree.DecisionTreeClassifier().fit(features, classifications)
 print clf.score(features, classifications)*100
 print clf.score(features2, classifications2)*100
+y_pred1 = clf.predict(features)
 y_pred = clf.predict(features2)
 print confusion_matrix(classifications2, y_pred)
+print(classification_report(classifications, y_pred1))
+print(classification_report(classifications2, y_pred))
+
+print "Gaussian Naive Bayes"
+gnb = RandomForestClassifier(n_estimators=20).fit(features, classifications)
+print gnb.score(features, classifications)*100
+print gnb.score(features2, classifications2)*100
+y_pred1 = clf.predict(features)
+y_pred = gnb.predict(features2)
+print confusion_matrix(classifications2, y_pred)
+print(classification_report(classifications, y_pred1))
+print(classification_report(classifications2, y_pred))
+
+
 
 
 # folds = 10
