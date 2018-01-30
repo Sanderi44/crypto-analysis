@@ -29,7 +29,6 @@ def test_feature_calculator(api):
 
 
 
-
 def main(args):
 	api = test_ccxt_api()
 	test_feature_calculator(api)
