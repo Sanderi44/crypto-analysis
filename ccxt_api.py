@@ -67,3 +67,9 @@ class ccxt_api:
 				pass
 
 		return candle_sets
+
+	def get_exchanges(self):
+		exch = []
+		for exchange in self.exchanges:
+			exch.append(exchange)
+		return exch
