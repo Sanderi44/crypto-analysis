@@ -114,6 +114,18 @@ def main(argv):
 	parser.print_info()
 
 	lookback=6
+	# create and fit the LSTM network
+	model = Sequential()
+	# LSTM neurons = 4, input_shape = (timesteps, features)
+	batch_size = 1
+	model.add(LSTM(4, input_shape=(lookback, 1)))
+	model.add(Dense(1))
+	model.compile(loss='mean_squared_error', optimizer='adam')
+	model.reset_states()
+
+
+	times = []
+	datas_untransformed = []
 
 	for i in range(parser.get_number_of_plots()):
 		exchange, base, market, interval, ohlcv, percent = parser.get_query(i)
@@ -121,39 +133,68 @@ def main(argv):
 
 		ohlcv_num = ohlcvToNum(ohlcv)
 		data_untransformed = candles[:, ohlcv_num].reshape(-1, 1)
+		datas_untransformed.append(data_untransformed)
+		times.append(candles[:, 0])
+
+
+	# print datas_untransformed
+	scaler = MinMaxScaler(feature_range=(0.0, 0.9))
+	single_list_datas = np.array([])
+	for x in datas_untransformed:
+		single_list_datas = np.concatenate( (single_list_datas, x[:,0]), axis=0)
+	# single_list_datas = np.reshape(datas_untransformed, -1)
+	# print single_list_datas
+	scaler.fit_transform(single_list_datas.reshape(-1, 1))
+
+
+
+
+	for i in range(len(datas_untransformed)):
 		# normalize the dataset
-		scaler = MinMaxScaler(feature_range=(0.0, 0.9))
-		dataset = scaler.fit_transform(data_untransformed)
+		dataset = scaler.transform(datas_untransformed[i])
+
+		train_size = int(len(dataset) * percent)
+		# test_size = len(dataset) - train_size
+		train = dataset[0:train_size,:]
+		# test = dataset[train_size:len(dataset),:]
+
+		train_x, train_y = feature_extract(train, lookback=lookback)
+		# test_x, test_y = feature_extract(test, lookback=lookback)
+		
+
+		# reshape input to be [samples, time steps, features]
+		trainX = np.reshape(train_x, (train_x.shape[0], train_x.shape[1], 1))
+		# testX = np.reshape(test_x, (test_x.shape[0], test_x.shape[1], 1))
+
+		model.fit(trainX, train_y, epochs=100, batch_size=batch_size, verbose=2)
+		# model.reset_states()
+
+
+	print model.summary()
+
+	for i in range(len(datas_untransformed)):	
+		exchange, base, market, interval, ohlcv, percent = parser.get_query(i)
+
+		dataset = scaler.transform(datas_untransformed[i])
 
 		train_size = int(len(dataset) * percent)
 		test_size = len(dataset) - train_size
-		train, test = dataset[0:train_size,:], dataset[train_size:len(dataset),:]
-
-
-
+		train = dataset[0:train_size,:]
+		test = dataset[train_size:len(dataset),:]
 
 		train_x, train_y = feature_extract(train, lookback=lookback)
 		test_x, test_y = feature_extract(test, lookback=lookback)
-		
 
 		# reshape input to be [samples, time steps, features]
 		trainX = np.reshape(train_x, (train_x.shape[0], train_x.shape[1], 1))
 		testX = np.reshape(test_x, (test_x.shape[0], test_x.shape[1], 1))
 
-
-		# create and fit the LSTM network
-		model = Sequential()
-		# LSTM neurons = 4, input_shape = (timesteps, features)
-		model.add(LSTM(4, input_shape=(lookback, 1)))
-		model.add(Dense(1))
-		model.compile(loss='mean_squared_error', optimizer='adam')
-		model.fit(trainX, train_y, epochs=100, batch_size=1, verbose=2)
-
-
-
 		# make predictions
-		trainPredict = model.predict(trainX)
-		testPredict = model.predict(testX)
+		trainPredict = model.predict(trainX, batch_size=batch_size)
+		# model.reset_states()
+		testPredict = model.predict(testX, batch_size=batch_size)
+		# model.reset_states()
+
 		# invert predictions
 		trainPredict = scaler.inverse_transform(trainPredict)
 		trainY = scaler.inverse_transform([train_y])
@@ -178,11 +219,11 @@ def main(argv):
 
 		# plot baseline and predictions
 		plt.figure()
-		ts = [datetime.datetime.fromtimestamp(t/1000) for t in candles[:,0]]
+		ts = [datetime.datetime.fromtimestamp(t/1000) for t in times[i]]
 		dates = date2num(ts)
-		plt.plot_date(dates, data_untransformed, '-', label="All data")
-		plt.plot_date(dates[lookback:train_size-1], trainPredict, '-', label="Trained Prediction")
-		plt.plot_date(dates[train_size + lookback:len(dataset)-1], testPredict, '-', label="Untrained Prediction")
+		plt.plot_date(dates, datas_untransformed[i], '-', label="All data")
+		plt.plot_date(dates[lookback-1:train_size-2], trainPredict, '-', label="Trained Prediction")
+		plt.plot_date(dates[train_size + lookback-1:len(dataset)-2], testPredict, '-', label="Untrained Prediction")
 		plt.gcf().autofmt_xdate()
 		plt.title("{0}/{1} market {2} from {3} for interval {4}".format(base, market, ohlcv, exchange, interval))
 		plt.xlabel("Date")
