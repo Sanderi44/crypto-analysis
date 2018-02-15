@@ -8,6 +8,7 @@ import datetime
 from keras.models import Sequential
 from keras.layers import Dense
 from keras.layers import LSTM
+from keras import preprocessing
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 import math
@@ -120,8 +121,8 @@ def main(argv):
 	batch_size = 1
 	model.add(LSTM(4, input_shape=(lookback, 1)))
 	model.add(Dense(1))
-	model.compile(loss='mean_squared_error', optimizer='adam')
-	model.reset_states()
+	model.compile(loss='mse', optimizer='rmsprop', metrics=['mae'])
+	# model.reset_states()
 
 
 	times = []
@@ -140,8 +141,20 @@ def main(argv):
 	# print datas_untransformed
 	scaler = MinMaxScaler(feature_range=(0.0, 0.9))
 	single_list_datas = np.array([])
+	lens = []
 	for x in datas_untransformed:
 		single_list_datas = np.concatenate( (single_list_datas, x[:,0]), axis=0)
+		lens.append(len(x))
+
+	print len(single_list_datas)
+	data = single_list_datas
+	# max_len = np.max(lens)
+	# print max_len, lens
+	
+	# data = preprocessing.sequence.pad_sequences(datas_untransformed, maxlen=max_len)
+	# print data
+
+
 	# single_list_datas = np.reshape(datas_untransformed, -1)
 	# print single_list_datas
 	scaler.fit_transform(single_list_datas.reshape(-1, 1))
@@ -149,25 +162,35 @@ def main(argv):
 
 
 
-	for i in range(len(datas_untransformed)):
-		# normalize the dataset
-		dataset = scaler.transform(datas_untransformed[i])
+	# for i in range(len(datas_untransformed)):
+	# normalize the dataset
+	dataset = scaler.transform(datas_untransformed[i])
 
-		train_size = int(len(dataset) * percent)
-		# test_size = len(dataset) - train_size
-		train = dataset[0:train_size,:]
-		# test = dataset[train_size:len(dataset),:]
+	train_size = int(len(dataset) * percent)
+	# test_size = len(dataset) - train_size
+	train = dataset[0:train_size,:]
+	# test = dataset[train_size:len(dataset),:]
 
-		train_x, train_y = feature_extract(train, lookback=lookback)
-		# test_x, test_y = feature_extract(test, lookback=lookback)
-		
+	train_x, train_y = feature_extract(train, lookback=lookback)
+	# test_x, test_y = feature_extract(test, lookback=lookback)
+	
 
-		# reshape input to be [samples, time steps, features]
-		trainX = np.reshape(train_x, (train_x.shape[0], train_x.shape[1], 1))
-		# testX = np.reshape(test_x, (test_x.shape[0], test_x.shape[1], 1))
+	# reshape input to be [samples, time steps, features]
+	trainX = np.reshape(train_x, (train_x.shape[0], train_x.shape[1], 1))
+	# testX = np.reshape(test_x, (test_x.shape[0], test_x.shape[1], 1))
 
-		model.fit(trainX, train_y, epochs=100, batch_size=batch_size, verbose=2)
-		# model.reset_states()
+
+	history = model.fit(trainX, train_y, epochs=50, batch_size=batch_size, verbose=2, validation_split=0.2)
+	plt.figure()
+	plt.plot(history.history['val_mean_absolute_error'], label="Validation MAE")
+	plt.plot(history.history['mean_absolute_error'], label="Training MAE")
+
+
+	plt.figure()
+	plt.plot(history.history['val_loss'], label="Validation MSE")
+	plt.plot(history.history['loss'], label="Training MSE")
+
+	# model.reset_states()
 
 
 	print model.summary()
@@ -240,7 +263,7 @@ def main(argv):
 
 
 
-		# plot(candles, exchange, base, market, interval, ohlcv)
+		plot(candles, exchange, base, market, interval, ohlcv)
 
 
 
