@@ -19,7 +19,7 @@ python test.py
 To run the Recurrent Neural Network that I built for XRP/USD daily close data from bittrex, with 80% of the data used as training data, run this: 
 
 ~~~~
-python rnn.py exchange=bittrex base=USD market=XRP interval=1d ohlcv=close percent=0.8
+python rnn.py filename=BTC_USD_1d_bittrex.csv batch=50 epochs=10000 name=name
 ~~~~
 
 If you have questions, please send me an email via github.

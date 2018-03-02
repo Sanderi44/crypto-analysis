@@ -6,12 +6,13 @@ import matplotlib.pyplot as plt
 from matplotlib.dates import date2num
 import datetime
 from keras.models import Sequential, Model
-from keras.layers import Dense, Input, LSTM, concatenate, add, average
+from keras.layers import Dense, Input, LSTM, concatenate, add, average, Concatenate, Reshape
 from keras.callbacks import TensorBoard
 from keras.initializers import RandomUniform
 from keras import preprocessing
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import train_test_split
 import tensorflow as tf
 import math
 import csv
@@ -109,7 +110,7 @@ def create_batches(data, time, separation, label_length):
 class Parser:
 	def __init__(self):
 		self.filename = ""
-		self.percent = 0.9
+		self.percent = 0.8
 		self.epochs = 20
 		self.batch_size = 1
 		self.name = ""
@@ -208,7 +209,47 @@ def feature_extract_slope(data, dataLength):
 	return np.array(dataX), np.array(dataY)
 
 
-def buildModel(dataLength, labelLength, neurons=20, optimizer='adam'):
+def buildModelNN(dataLength, labelLength, neurons=20, optimizer='adam'):
+	# _open = Input(shape=(dataLength, 1), name="Open")
+	_high = Input(shape=(dataLength, 1), name="High")
+	_low = Input(shape=(dataLength, 1), name="Low")
+	_close = Input(shape=(dataLength, 1), name="Close")
+	_volume = Input(shape=(dataLength, 1), name="Volume")
+	_google = Input(shape=(dataLength, 1), name="Google")
+
+
+	_high_reshape = Reshape((dataLength,))(_high)
+	_low_reshape = Reshape((dataLength,))(_low)
+	_close_reshape = Reshape((dataLength,))(_close)
+	_volume_reshape = Reshape((dataLength,))(_volume)
+	_google_reshape = Reshape((dataLength,))(_google)
+
+
+	output = concatenate(
+		[
+			_high_reshape,
+			_low_reshape,
+			_close_reshape,
+			_volume_reshape,
+			_google_reshape,
+		], axis=1
+	)
+
+	output = Dense(neurons, activation="sigmoid", name="combiner_layer")(output)
+
+
+	# print output
+
+	output = Dense(labelLength, activation="linear", name="weighted_average_ouput")(output)
+
+	model = Model(inputs=[_high, _low, _close, _volume, _google], outputs=[output])
+
+	model.compile(loss='mse', optimizer=optimizer, metrics=['mae'])
+	model.summary()
+	return model
+
+
+def buildModelLSTM(dataLength, labelLength, neurons=20, optimizer='adam'):
 	# _open = Input(shape=(dataLength, 1), name="Open")
 	_high = Input(shape=(dataLength, 1), name="High")
 	_low = Input(shape=(dataLength, 1), name="Low")
@@ -217,12 +258,12 @@ def buildModel(dataLength, labelLength, neurons=20, optimizer='adam'):
 	_google = Input(shape=(dataLength, 1), name="Google")
 	# _bias = Input(tensor=tf.constant([1.]))
 
-	# openLayer = LSTM(10, return_sequences=False, recurrent_dropout=0.1)(_open)
-	highLayer = LSTM(neurons, return_sequences=False)(_high)
-	lowLayer = LSTM(neurons, return_sequences=False)(_low)
-	closeLayer = LSTM(neurons, return_sequences=False)(_close)
-	volumeLayer = LSTM(neurons, return_sequences=False)(_volume)
-	googleLayer = LSTM(neurons, return_sequences=False)(_google)
+	# openLayer = Dense(neurons, return_sequences=False, recurrent_dropout=0.1)(_open)
+	highLayer = LSTM(neurons, return_sequences=False,name="high_layer")(_high)
+	lowLayer = LSTM(neurons, return_sequences=False, name="low_layer")(_low)
+	closeLayer = LSTM(neurons, return_sequences=False, name="close_layer")(_close)
+	volumeLayer = LSTM(neurons, return_sequences=False, name="volume_layer")(_volume)
+	googleLayer = LSTM(neurons, return_sequences=False, name="google_layer")(_google)
 
 	output = concatenate(
 		[
@@ -236,7 +277,7 @@ def buildModel(dataLength, labelLength, neurons=20, optimizer='adam'):
 		]
 	)
 
-	# output = Dense(4, activation="linear", name="combiner_layer")(output)
+	# output = Dense(3, activation="linear", name="combiner_layer")(output)
 
 
 	# print output
@@ -245,7 +286,12 @@ def buildModel(dataLength, labelLength, neurons=20, optimizer='adam'):
 
 	model = Model(inputs=[_high, _low, _close, _volume, _google], outputs=[output])
 	model.compile(loss='mse', optimizer=optimizer, metrics=['mae'])
+	model.summary()
 	return model
+
+def pick_random_from_list(li, train_length):
+	np.random.shuffle(li)
+	return li[:train_length], li[train_length:]
 
 def main(argv):
 	# Take in data from terminal arguments
@@ -276,8 +322,8 @@ def main(argv):
 
 	# This determines the length of the input data and output data
 	# TODO: Need to fix the feature_extract function so that it works with multi-output 
-	dataLength = 4
-	labelLength = 1
+	dataLength = 10
+	labelLength = 3
 
 
 	# Loads daily google search data for BTC that was downloaded
@@ -344,37 +390,66 @@ def main(argv):
 	
 
 	# Split the data into training and testing portions
-	train_length = int(percent*ohlc.shape[0])
+	train_length = int(percent*len(open_input))
+	full_set = [k for k in range(len(open_input))]
+	train_set, test_set = pick_random_from_list(full_set, train_length)
 
-	open_train_x = open_input[:train_length, :]
-	high_train_x = high_input[:train_length, :]
-	low_train_x = low_input[:train_length, :]
-	close_train_x = close_input[:train_length, :]
-	volume_train_x = volume_input[:train_length, :]
-	google_train_x = google_input[:train_length, :]
+	# train_set = [k for k in range(train_length)]
+	# test_set = [train_length+k for k in range(ohlc.shape[0] - train_length)]
+	# print train_set, test_set
+	open_train_x = open_input[train_set, :]
+	high_train_x = high_input[train_set, :]
+	low_train_x = low_input[train_set, :]
+	close_train_x = close_input[train_set, :]
+	volume_train_x = volume_input[train_set, :]
+	google_train_x = google_input[train_set, :]
 	
-	close_train_y = close_output[:train_length, :]
+	close_train_y = close_output[train_set, :]
 
-	open_test_x = open_input[train_length:, :]
-	high_test_x = high_input[train_length:, :]
-	low_test_x = low_input[train_length:, :]
-	close_test_x = close_input[train_length:, :]
-	volume_test_x = volume_input[train_length:, :]
-	google_test_x = google_input[train_length:, :]
+	open_test_x = open_input[test_set, :]
+	high_test_x = high_input[test_set, :]
+	low_test_x = low_input[test_set, :]
+	close_test_x = close_input[test_set, :]
+	volume_test_x = volume_input[test_set, :]
+	google_test_x = google_input[test_set, :]
 
-	close_test_y = close_output[train_length:, :]
+	close_test_y = close_output[test_set, :]
 
 
 
 	# Build the deep learning model
 	# TODO: add dynamic number of lstms and layer widths and which features
-	model = buildModel(dataLength, labelLength, neurons=20, optimizer='adam')
+	model = buildModelLSTM(dataLength, labelLength, neurons=20, optimizer='adam')
 
 	# Fits the new model to the data with 20% validation
-	history = model.fit([high_train_x, low_train_x, close_train_x, volume_train_x, google_train_x], [close_train_y], epochs=epochs, batch_size=batch_size, verbose=2, callbacks=[TensorBoard("/home/sander/tensorboard/"+name+"_"+filename.split(".")[0]+"_epochs"+str(epochs)+"_"+"batch"+str(batch_size))])
+	print close_train_y.shape
+	history = model.fit([high_train_x, low_train_x, close_train_x, volume_train_x, google_train_x], [close_train_y], epochs=epochs, batch_size=batch_size, verbose=2, callbacks=[TensorBoard("/home/sander/tensorboard/"+name+"_"+filename.split(".")[0]+"_epochs"+str(epochs)+"_"+"batch"+str(batch_size))], validation_data=([high_test_x, low_test_x, close_test_x, volume_test_x, google_test_x], [close_test_y]))
 
 	# Predict on both the training and testing data
 	# TODO: do batches to show multi-output results 
+
+	train_length = int(percent*len(open_input))
+	train_set = [k for k in range(train_length)]
+	test_set = [train_length+k for k in range(len(open_input) - train_length)]
+	# print train_set, test_set
+	open_train_x = open_input[train_set, :]
+	high_train_x = high_input[train_set, :]
+	low_train_x = low_input[train_set, :]
+	close_train_x = close_input[train_set, :]
+	volume_train_x = volume_input[train_set, :]
+	google_train_x = google_input[train_set, :]
+	
+	close_train_y = close_output[train_set, :]
+
+	open_test_x = open_input[test_set, :]
+	high_test_x = high_input[test_set, :]
+	low_test_x = low_input[test_set, :]
+	close_test_x = close_input[test_set, :]
+	volume_test_x = volume_input[test_set, :]
+	google_test_x = google_input[test_set, :]
+
+	close_test_y = close_output[test_set, :]
+
 	training_set = [high_train_x, low_train_x, close_train_x, volume_train_x, google_train_x]
 	testing_set = [high_test_x, low_test_x, close_test_x, volume_test_x, google_test_x]
 
@@ -383,29 +458,29 @@ def main(argv):
 	dates = datas_untransformed[:, 0]
 
 
-	# if labelLength == 1:
-	# 	trainPredict = model.predict(training_set, batch_size=batch_size)
-	# 	testPredict = model.predict(testing_set, batch_size=batch_size)
-	# 	# calculate root mean squared error
-	# 	trainScore = math.sqrt(mean_squared_error(close_train_y[:,0]*scalar, trainPredict*scalar))/len(trainPredict)
-	# 	print('Train Score: %.4f RMSE' % (trainScore))
-	# 	testScore = math.sqrt(mean_squared_error(close_test_y[:,0]*scalar, testPredict*scalar))/len(testPredict)
-	# 	print('Test Score: %.4f RMSE' % (testScore))
+	if labelLength == 1:
+		trainPredict = model.predict(training_set, batch_size=batch_size)
+		testPredict = model.predict(testing_set, batch_size=batch_size)
+		# calculate root mean squared error
+		trainScore = math.sqrt(mean_squared_error(close_train_y[:,0]*scalar, trainPredict*scalar))/len(trainPredict)
+		print('Train Score: %.4f RMSE' % (trainScore))
+		testScore = math.sqrt(mean_squared_error(close_test_y[:,0]*scalar, testPredict*scalar))/len(testPredict)
+		print('Test Score: %.4f RMSE' % (testScore))
 
-	# 	# plot baseline and predictions
-	# 	plt.figure()
+		# plot baseline and predictions
+		plt.figure()
 
 
-	# 	plt.plot_date(dates, datas_untransformed[:, 4], '-', label="All data")
-	# 	print len(dates[dataLength:len(trainPredict)+dataLength]), len(trainPredict)
-	# 	print len(dates[len(trainPredict)+dataLength+1:-labelLength]), len(testPredict)
-	# 	plt.plot_date(dates[dataLength:len(trainPredict)+dataLength], trainPredict*scalar, '-', label="Trained Prediction {0}".format(i))
-	# 	plt.plot_date(dates[len(trainPredict)+dataLength+1:-labelLength], testPredict*scalar, '-', label="Test Prediction {0}".format(i))
-	# 	plt.gcf().autofmt_xdate()
-	# 	plt.title("{0}/{1} market from {2} for interval {3}".format("bittrex", "USD", "BTC", "1d"))
-	# 	plt.xlabel("Date")
-	# 	plt.ylabel("Value ({0})".format("USD"))
-	# 	# plt.legend()
+		plt.plot_date(dates, datas_untransformed[:, 4], '-', label="All data")
+		print len(dates[dataLength:len(trainPredict)+dataLength]), len(trainPredict)
+		print len(dates[len(trainPredict)+dataLength+1:-labelLength]), len(testPredict)
+		plt.plot_date(dates[dataLength:len(trainPredict)+dataLength], trainPredict*scalar, '-', label="Trained Prediction {0}".format(i))
+		plt.plot_date(dates[len(trainPredict)+dataLength+1:-labelLength], testPredict*scalar, '-', label="Test Prediction {0}".format(i))
+		plt.gcf().autofmt_xdate()
+		plt.title("{0}/{1} market from {2} for interval {3}".format("bittrex", "USD", "BTC", "1d"))
+		plt.xlabel("Date")
+		plt.ylabel("Value ({0})".format("USD"))
+		# plt.legend()
 
 
 	# else:
